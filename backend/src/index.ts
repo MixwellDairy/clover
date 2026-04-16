@@ -4,6 +4,7 @@ import express, { NextFunction, Request, Response } from "express";
 import helmet from "helmet";
 import jwt from "jsonwebtoken";
 import morgan from "morgan";
+import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { generateAssistantReply } from "./ai";
 import { config } from "./config";
@@ -13,10 +14,14 @@ import { extractMemorySnippets, rankRelevantMemories } from "./memory";
 type AuthRequest = Request & { user?: { id: string; isAdmin: boolean } };
 
 const app = express();
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 25, standardHeaders: true, legacyHeaders: false });
+const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 180, standardHeaders: true, legacyHeaders: false });
+
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("combined"));
+app.use("/api", apiLimiter);
 
 const ensureSchema = async () => {
   await query(`
@@ -108,8 +113,8 @@ app.get("/api/health", async (_req, res) => {
   res.json({ ok: true, dbTime: now[0]?.now });
 });
 
-app.post("/api/auth/signup", async (req, res) => {
-  const schema = z.object({ email: z.email(), password: z.string().min(6), name: z.string().min(2) });
+app.post("/api/auth/signup", authLimiter, async (req, res) => {
+  const schema = z.object({ email: z.string().email(), password: z.string().min(6), name: z.string().min(2) });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.issues[0]?.message || "Invalid input" });
@@ -130,8 +135,8 @@ app.post("/api/auth/signup", async (req, res) => {
   }
 });
 
-app.post("/api/auth/login", async (req, res) => {
-  const schema = z.object({ email: z.email(), password: z.string().min(1) });
+app.post("/api/auth/login", authLimiter, async (req, res) => {
+  const schema = z.object({ email: z.string().email(), password: z.string().min(1) });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid credentials" });
@@ -216,7 +221,14 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
     .join("\n");
 
   const history = await query<{ role: "user" | "assistant"; content: string }>(
-    `SELECT role, content FROM chat_messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT 12`,
+    `SELECT role, content FROM (
+       SELECT role, content, created_at
+       FROM chat_messages
+       WHERE session_id = $1
+       ORDER BY created_at DESC
+       LIMIT 12
+     ) history
+     ORDER BY created_at ASC`,
     [req.params.id]
   );
 
@@ -225,7 +237,7 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
   const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
   const assistant = await generateAssistantReply([
     { role: "system", content: systemPrompt },
-    ...history.reverse().map((item) => ({ role: item.role, content: item.content }))
+    ...history.map((item) => ({ role: item.role, content: item.content }))
   ], {
     provider: settings.ai_provider,
     groqApiKey: settings.groq_api_key || config.groqApiKey,

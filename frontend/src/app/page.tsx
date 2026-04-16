@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 
 type Session = { id: string; title: string };
@@ -39,7 +39,7 @@ export default function Home() {
       });
   }, [token]);
 
-  const refreshSessions = async (activeId?: string) => {
+  const refreshSessions = useCallback(async (activeId?: string) => {
     const list = await api<Session[]>("/api/chat/sessions", {}, token);
     setSessions(list);
     const selected = activeId || list[0]?.id || "";
@@ -50,14 +50,13 @@ export default function Home() {
     } else {
       setMessages([]);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     if (token) {
       refreshSessions().catch((err: Error) => setError(err.message));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [refreshSessions, token]);
 
   useEffect(() => {
     if (!token || !activeSessionId) return;

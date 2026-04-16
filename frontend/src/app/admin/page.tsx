@@ -41,7 +41,6 @@ export default function AdminPage() {
     if (missingToken) {
       return;
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     load(token).catch((err: Error) => setError(err.message));
   }, [missingToken, token]);
 

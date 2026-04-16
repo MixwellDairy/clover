@@ -68,6 +68,6 @@ export const generateAssistantReply = async (messages: Message[], options?: Prov
     }
     return await callGroq(messages, options);
   } catch {
-    return "I couldn\'t reach the configured AI provider right now. Please verify Groq/Ollama settings in admin and try again.";
+    return "I couldn't reach the configured AI provider right now. Please verify Groq/Ollama settings in admin and try again.";
   }
 };
