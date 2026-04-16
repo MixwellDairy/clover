@@ -16,6 +16,11 @@ type AuthRequest = Request & { user?: { id: string; isAdmin: boolean } };
 const app = express();
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 25, standardHeaders: true, legacyHeaders: false });
 const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 180, standardHeaders: true, legacyHeaders: false });
+const NWS_MIN_LATITUDE = 18;
+const NWS_MAX_LATITUDE = 72;
+const NWS_MIN_LONGITUDE = -179;
+const NWS_MAX_LONGITUDE = -60;
+const DEFAULT_DAILY_MESSAGE_LIMIT = 200;
 const nwsHeaders = {
   Accept: "application/geo+json",
   "User-Agent": "CloverChat/1.0 (weather integration)"
@@ -138,7 +143,9 @@ const parseCoordinates = (input: string) => {
   const longitude = Number(match[2]);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
   // NWS only covers US and territories; keep coordinates within that approximate coverage envelope.
-  if (latitude < 18 || latitude > 72 || longitude < -179 || longitude > -60) return null;
+  if (latitude < NWS_MIN_LATITUDE || latitude > NWS_MAX_LATITUDE || longitude < NWS_MIN_LONGITUDE || longitude > NWS_MAX_LONGITUDE) {
+    return null;
+  }
   return { latitude, longitude };
 };
 
@@ -248,7 +255,7 @@ const ensureSchema = async () => {
     );
 
     ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS daily_message_limit INTEGER NOT NULL DEFAULT 200;
+    ADD COLUMN IF NOT EXISTS daily_message_limit INTEGER NOT NULL DEFAULT ${DEFAULT_DAILY_MESSAGE_LIMIT};
   `);
 
   await query(
@@ -394,7 +401,7 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
        AND m.created_at >= date_trunc('day', NOW())`,
     [req.user!.id]
   );
-  const dailyLimit = Math.max(1, Number(userLimitRow?.daily_message_limit || 200));
+  const dailyLimit = Math.max(1, Number(userLimitRow?.daily_message_limit || DEFAULT_DAILY_MESSAGE_LIMIT));
   const usedToday = Number(usageRow?.count || "0");
   if (usedToday >= dailyLimit) {
     return res.status(429).json({ error: `Daily usage limit reached (${dailyLimit} messages). Please contact an admin.` });

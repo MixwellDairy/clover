@@ -9,6 +9,8 @@ type Memory = { id: string; content: string; email: string; updated_at: string }
 type Conversation = { id: string; title: string; email: string; updated_at: string; messages: string };
 type Setting = { key: string; value: string };
 type Analytics = { users: number; sessions: number; messages: number; memories: number };
+const DEFAULT_MODEL_PROFILES_JSON =
+  '[\n  {"id":"groq-fast","name":"Groq Fast","provider":"groq","model":"llama-3.1-8b-instant"},\n  {"id":"local-ollama","name":"Local Ollama","provider":"ollama","model":"llama3.1","url":"http://localhost:11434"}\n]';
 
 export default function AdminPage() {
   const [token] = useState(() => (typeof window === "undefined" ? "" : window.localStorage.getItem("clover_token") || ""));
@@ -23,9 +25,7 @@ export default function AdminPage() {
   const [settingValue, setSettingValue] = useState("");
   const [groqApiKeysText, setGroqApiKeysText] = useState("");
   const [activeGroqKeyIndex, setActiveGroqKeyIndex] = useState("0");
-  const [modelProfilesText, setModelProfilesText] = useState(
-    '[\n  {"id":"groq-fast","name":"Groq Fast","provider":"groq","model":"llama-3.1-8b-instant"},\n  {"id":"local-ollama","name":"Local Ollama","provider":"ollama","model":"llama3.1","url":"http://localhost:11434"}\n]'
-  );
+  const [modelProfilesText, setModelProfilesText] = useState(DEFAULT_MODEL_PROFILES_JSON);
   const [activeModelProfile, setActiveModelProfile] = useState("");
   const [usageDrafts, setUsageDrafts] = useState<Record<string, string>>({});
   const missingToken = !token;
