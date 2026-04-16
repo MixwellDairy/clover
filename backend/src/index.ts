@@ -404,7 +404,7 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
   const dailyLimit = Math.max(1, Number(userLimitRow?.daily_message_limit || DEFAULT_DAILY_MESSAGE_LIMIT));
   const usedToday = Number(usageRow?.count || "0");
   if (usedToday >= dailyLimit) {
-    return res.status(429).json({ error: `Daily usage limit reached (${dailyLimit} messages). Please contact an admin.` });
+    return res.status(429).json({ error: `Daily usage limit reached (${dailyLimit} messages). The limit resets at midnight UTC. Please contact an admin if you need a higher limit.` });
   }
 
   const input = parsed.data.content.trim();

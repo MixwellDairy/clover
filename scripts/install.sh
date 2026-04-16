@@ -166,6 +166,9 @@ fi
 if [[ -n "$GROQ_KEY" ]]; then
   info "Seeding GROQ_API_KEY into the web UI (Admin → Settings)…"
 
+  # ⚠ Security note: the default admin credentials are well-known.
+  #   Change the admin password immediately after first login:
+  #   Admin Panel → User Profile → Settings
   # Authenticate as the default admin to obtain a JWT
   LOGIN_RESP="$(curl -sf --max-time 10 \
     -X POST http://localhost:4000/api/auth/login \
@@ -224,6 +227,8 @@ echo ""
 echo -e "  ${BOLD}Default admin login:${NC}"
 echo    "    Email:    admin@clover.local"
 echo    "    Password: admin123"
+echo -e "  ${YELLOW}${BOLD}⚠  Change the admin password after first login!${NC}"
+echo    "    Admin Panel → User Profile → Settings → New password"
 echo ""
 if [[ -n "$GROQ_KEY" ]]; then
   echo -e "  ${GREEN}Groq API key configured in the web UI.${NC}"
