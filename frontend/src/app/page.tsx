@@ -19,6 +19,8 @@ export default function Home() {
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState("");
 
   useEffect(() => {
     const saved = window.localStorage.getItem("clover_token");
@@ -87,17 +89,30 @@ export default function Home() {
   };
 
   const send = async () => {
-    if (!activeSessionId || !draft.trim()) return;
+    if (!activeSessionId || !draft.trim() || isSending) return;
     const content = draft.trim();
+    const weatherIntent =
+      /\b(weather|forecast|temperature|rain|snow|wind|humidity|storm|sunny|cloudy|hot|cold)\b/i.test(content);
+    setError("");
+    setIsSending(true);
+    setLoadingStatus(weatherIntent ? "Checking weather..." : "Clover is thinking...");
     setDraft("");
-    await api<{ reply: string }>(
-      `/api/chat/sessions/${activeSessionId}/messages`,
-      { method: "POST", body: JSON.stringify({ content }) },
-      token
-    );
-    const updated = await api<Message[]>(`/api/chat/sessions/${activeSessionId}/messages`, {}, token);
-    setMessages(updated);
-    await refreshSessions(activeSessionId);
+    try {
+      await api<{ reply: string }>(
+        `/api/chat/sessions/${activeSessionId}/messages`,
+        { method: "POST", body: JSON.stringify({ content }) },
+        token
+      );
+      const updated = await api<Message[]>(`/api/chat/sessions/${activeSessionId}/messages`, {}, token);
+      setMessages(updated);
+      await refreshSessions(activeSessionId);
+    } catch (err) {
+      setError((err as Error).message);
+      setDraft(content);
+    } finally {
+      setIsSending(false);
+      setLoadingStatus("");
+    }
   };
 
   const sortedMessages = useMemo(() => [...messages].sort((a, b) => a.created_at.localeCompare(b.created_at)), [messages]);
@@ -156,10 +171,18 @@ export default function Home() {
               <p>{message.content}</p>
             </article>
           ))}
+          {loadingStatus && (
+            <article className="msg assistant">
+              <strong>Clover</strong>
+              <p>{loadingStatus}</p>
+            </article>
+          )}
         </div>
         <div className="composer">
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type your message..." />
-          <button onClick={send}>Send</button>
+          <button onClick={send} disabled={isSending}>
+            {isSending ? "Sending..." : "Send"}
+          </button>
         </div>
       </section>
     </main>

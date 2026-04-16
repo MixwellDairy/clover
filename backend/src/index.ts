@@ -16,6 +16,67 @@ type AuthRequest = Request & { user?: { id: string; isAdmin: boolean } };
 const app = express();
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 25, standardHeaders: true, legacyHeaders: false });
 const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 180, standardHeaders: true, legacyHeaders: false });
+const nwsHeaders = {
+  Accept: "application/geo+json",
+  "User-Agent": "CloverChat/1.0 (weather integration)"
+};
+
+const weatherIntentPattern =
+  /\b(weather|forecast|temperature|rain|snow|wind|humidity|storm|sunny|cloudy|hot|cold)\b/i;
+
+const parseCoordinates = (input: string) => {
+  const match = input.match(/(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!match) return null;
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (latitude < 18 || latitude > 72 || longitude < -179 || longitude > -60) return null;
+  return { latitude, longitude };
+};
+
+const fetchNwsWeatherReply = async (input: string) => {
+  if (!weatherIntentPattern.test(input)) return null;
+  const coordinates = parseCoordinates(input);
+  if (!coordinates) {
+    return "I can check weather via the free NWS API. Please include coordinates in your message (for example: weather at 38.8977,-77.0365).";
+  }
+
+  const pointsResponse = await fetch(`https://api.weather.gov/points/${coordinates.latitude},${coordinates.longitude}`, {
+    headers: nwsHeaders
+  });
+  if (!pointsResponse.ok) {
+    return "I couldn't reach NWS for that location right now. Please try again in a moment.";
+  }
+
+  const pointData = (await pointsResponse.json()) as { properties?: { forecast?: string; relativeLocation?: { properties?: { city?: string; state?: string } } } };
+  const forecastUrl = pointData.properties?.forecast;
+  if (!forecastUrl) {
+    return "I couldn't find an NWS forecast grid for that location.";
+  }
+
+  const forecastResponse = await fetch(forecastUrl, { headers: nwsHeaders });
+  if (!forecastResponse.ok) {
+    return "I found the location, but NWS forecast data is unavailable right now.";
+  }
+
+  const forecastData = (await forecastResponse.json()) as {
+    properties?: { periods?: Array<{ name?: string; shortForecast?: string; detailedForecast?: string; temperature?: number; temperatureUnit?: string; windSpeed?: string; windDirection?: string }> };
+  };
+  const period = forecastData.properties?.periods?.[0];
+  if (!period) {
+    return "NWS returned no forecast periods for that location.";
+  }
+
+  const city = pointData.properties?.relativeLocation?.properties?.city;
+  const state = pointData.properties?.relativeLocation?.properties?.state;
+  const location = city && state ? `${city}, ${state}` : `${coordinates.latitude},${coordinates.longitude}`;
+  const temperature =
+    typeof period.temperature === "number" && period.temperatureUnit ? `${period.temperature}°${period.temperatureUnit}` : "N/A";
+  const wind = [period.windSpeed, period.windDirection].filter(Boolean).join(" ").trim() || "N/A";
+  const summary = period.shortForecast || period.detailedForecast || "Forecast unavailable";
+
+  return `Weather for ${location} (${period.name || "Current"}): ${summary}. Temperature: ${temperature}. Wind: ${wind}. Source: NWS.`;
+};
 
 app.use(helmet());
 app.use(cors());
@@ -235,16 +296,22 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
   const systemPrompt = `You are Clover AI assistant. Keep responses useful and concise. Relevant user memory:\n${topMemories || "- none"}`;
   const settingsRows = await query<{ key: string; value: string }>(`SELECT key, value FROM settings`);
   const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
-  const assistant = await generateAssistantReply([
-    { role: "system", content: systemPrompt },
-    ...history.map((item) => ({ role: item.role, content: item.content }))
-  ], {
-    provider: settings.ai_provider,
-    groqApiKey: settings.groq_api_key || config.groqApiKey,
-    groqModel: settings.groq_model || config.groqModel,
-    ollamaUrl: settings.ollama_url || config.ollamaUrl,
-    ollamaModel: settings.ollama_model || config.ollamaModel
-  });
+  const weatherReply = await fetchNwsWeatherReply(input);
+  const assistant =
+    weatherReply ||
+    (await generateAssistantReply(
+      [
+        { role: "system", content: systemPrompt },
+        ...history.map((item) => ({ role: item.role, content: item.content }))
+      ],
+      {
+        provider: settings.ai_provider,
+        groqApiKey: settings.groq_api_key || config.groqApiKey,
+        groqModel: settings.groq_model || config.groqModel,
+        ollamaUrl: settings.ollama_url || config.ollamaUrl,
+        ollamaModel: settings.ollama_model || config.ollamaModel
+      }
+    ));
 
   await query(`INSERT INTO chat_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`, [req.params.id, assistant]);
   await query(`UPDATE chat_sessions SET updated_at = NOW() WHERE id = $1`, [req.params.id]);
