@@ -42,6 +42,95 @@ type NwsForecastResponse = {
   };
 };
 
+type ModelProfile = {
+  id: string;
+  name: string;
+  provider: "groq" | "ollama";
+  model: string;
+  url?: string;
+};
+
+type ModelSelection = {
+  provider: string;
+  groqModel?: string;
+  ollamaModel?: string;
+  ollamaUrl?: string;
+};
+
+const parseJsonSetting = <T>(raw: string | undefined, fallback: T): T => {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const parseModelProfiles = (raw: string | undefined): ModelProfile[] => {
+  const profiles = parseJsonSetting<unknown[]>(raw, []);
+  const validProfiles: ModelProfile[] = [];
+  for (const item of profiles) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as Record<string, unknown>;
+    if (candidate.provider !== "groq" && candidate.provider !== "ollama") continue;
+    if (typeof candidate.id !== "string" || typeof candidate.name !== "string" || typeof candidate.model !== "string") continue;
+    const profile: ModelProfile = {
+      id: candidate.id.trim(),
+      name: candidate.name.trim(),
+      provider: candidate.provider,
+      model: candidate.model.trim()
+    };
+    if (typeof candidate.url === "string" && candidate.url.trim()) {
+      profile.url = candidate.url.trim();
+    }
+    if (profile.id && profile.name && profile.model) {
+      validProfiles.push(profile);
+    }
+  }
+  return validProfiles;
+};
+
+const resolveGroqApiKey = (settings: Record<string, string>) => {
+  const keys = parseJsonSetting<unknown[]>(settings.groq_api_keys, [])
+    .filter((item): item is string => typeof item === "string")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const configuredIndex = Number(settings.groq_api_key_index || "0");
+  const safeIndex = Number.isInteger(configuredIndex) && configuredIndex >= 0 ? configuredIndex : 0;
+  return keys[safeIndex] || keys[0] || settings.groq_api_key || config.groqApiKey;
+};
+
+const resolveModelSelection = (settings: Record<string, string>): ModelSelection => {
+  const profiles = parseModelProfiles(settings.model_profiles);
+  const activeProfileId = settings.active_model_profile?.trim();
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0];
+
+  if (!activeProfile) {
+    return {
+      provider: settings.ai_provider || config.aiProvider,
+      groqModel: settings.groq_model || config.groqModel,
+      ollamaModel: settings.ollama_model || config.ollamaModel,
+      ollamaUrl: settings.ollama_url || config.ollamaUrl
+    };
+  }
+
+  if (activeProfile.provider === "groq") {
+    return {
+      provider: "groq",
+      groqModel: activeProfile.model,
+      ollamaModel: settings.ollama_model || config.ollamaModel,
+      ollamaUrl: settings.ollama_url || config.ollamaUrl
+    };
+  }
+
+  return {
+    provider: "ollama",
+    groqModel: settings.groq_model || config.groqModel,
+    ollamaModel: activeProfile.model,
+    ollamaUrl: activeProfile.url || settings.ollama_url || config.ollamaUrl
+  };
+};
+
 const parseCoordinates = (input: string) => {
   const match = input.match(/(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
   if (!match) return null;
@@ -157,6 +246,9 @@ const ensureSchema = async () => {
       payload JSONB,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS daily_message_limit INTEGER NOT NULL DEFAULT 200;
   `);
 
   await query(
@@ -292,6 +384,22 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
     return res.status(404).json({ error: "Session not found" });
   }
 
+  const [userLimitRow] = await query<{ daily_message_limit: number }>(`SELECT daily_message_limit FROM users WHERE id = $1`, [req.user!.id]);
+  const [usageRow] = await query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+     FROM chat_messages m
+     JOIN chat_sessions s ON s.id = m.session_id
+     WHERE s.user_id = $1
+       AND m.role = 'user'
+       AND m.created_at >= date_trunc('day', NOW())`,
+    [req.user!.id]
+  );
+  const dailyLimit = Math.max(1, Number(userLimitRow?.daily_message_limit || 200));
+  const usedToday = Number(usageRow?.count || "0");
+  if (usedToday >= dailyLimit) {
+    return res.status(429).json({ error: `Daily usage limit reached (${dailyLimit} messages). Please contact an admin.` });
+  }
+
   const input = parsed.data.content.trim();
   await query(`INSERT INTO chat_messages (session_id, role, content) VALUES ($1, 'user', $2)`, [req.params.id, input]);
 
@@ -316,7 +424,8 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
 
   const systemPrompt = `You are Clover AI assistant. Keep responses useful and concise. Relevant user memory:\n${topMemories || "- none"}`;
   const settingsRows = await query<{ key: string; value: string }>(`SELECT key, value FROM settings`);
-  const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
+  const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value])) as Record<string, string>;
+  const modelSelection = resolveModelSelection(settings);
   const weatherReply = await fetchNwsWeatherReply(input);
   const assistant =
     weatherReply ||
@@ -326,11 +435,11 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
         ...history.map((item) => ({ role: item.role, content: item.content }))
       ],
       {
-        provider: settings.ai_provider,
-        groqApiKey: settings.groq_api_key || config.groqApiKey,
-        groqModel: settings.groq_model || config.groqModel,
-        ollamaUrl: settings.ollama_url || config.ollamaUrl,
-        ollamaModel: settings.ollama_model || config.ollamaModel
+        provider: modelSelection.provider,
+        groqApiKey: resolveGroqApiKey(settings),
+        groqModel: modelSelection.groqModel || settings.groq_model || config.groqModel,
+        ollamaUrl: modelSelection.ollamaUrl || settings.ollama_url || config.ollamaUrl,
+        ollamaModel: modelSelection.ollamaModel || settings.ollama_model || config.ollamaModel
       }
     ));
 
@@ -357,23 +466,24 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
 });
 
 app.get("/api/admin/users", auth, adminOnly, async (_req, res) => {
-  const rows = await query<{ id: string; email: string; name: string; is_admin: boolean; disabled: boolean; created_at: string }>(
-    `SELECT id, email, name, is_admin, disabled, created_at FROM users ORDER BY created_at DESC`
+  const rows = await query<{ id: string; email: string; name: string; is_admin: boolean; disabled: boolean; daily_message_limit: number; created_at: string }>(
+    `SELECT id, email, name, is_admin, disabled, daily_message_limit, created_at FROM users ORDER BY created_at DESC`
   );
   res.json(rows);
 });
 
 app.patch("/api/admin/users/:id", auth, adminOnly, async (req, res) => {
-  const schema = z.object({ disabled: z.boolean().optional(), isAdmin: z.boolean().optional() });
+  const schema = z.object({ disabled: z.boolean().optional(), isAdmin: z.boolean().optional(), dailyMessageLimit: z.number().int().min(1).max(10000).optional() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid payload" });
   }
-  const { disabled, isAdmin } = parsed.data;
-  await query(`UPDATE users SET disabled = COALESCE($2, disabled), is_admin = COALESCE($3, is_admin) WHERE id = $1`, [
+  const { disabled, isAdmin, dailyMessageLimit } = parsed.data;
+  await query(`UPDATE users SET disabled = COALESCE($2, disabled), is_admin = COALESCE($3, is_admin), daily_message_limit = COALESCE($4, daily_message_limit) WHERE id = $1`, [
     req.params.id,
     disabled,
-    isAdmin
+    isAdmin,
+    dailyMessageLimit
   ]);
   res.json({ ok: true });
 });
