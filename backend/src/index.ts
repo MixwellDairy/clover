@@ -20,6 +20,8 @@ app.use(morgan("combined"));
 
 const ensureSchema = async () => {
   await query(`
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       email TEXT UNIQUE NOT NULL,
@@ -219,10 +221,18 @@ app.post("/api/chat/sessions/:id/messages", auth, async (req: AuthRequest, res) 
   );
 
   const systemPrompt = `You are Clover AI assistant. Keep responses useful and concise. Relevant user memory:\n${topMemories || "- none"}`;
+  const settingsRows = await query<{ key: string; value: string }>(`SELECT key, value FROM settings`);
+  const settings = Object.fromEntries(settingsRows.map((row) => [row.key, row.value]));
   const assistant = await generateAssistantReply([
     { role: "system", content: systemPrompt },
     ...history.reverse().map((item) => ({ role: item.role, content: item.content }))
-  ]);
+  ], {
+    provider: settings.ai_provider,
+    groqApiKey: settings.groq_api_key || config.groqApiKey,
+    groqModel: settings.groq_model || config.groqModel,
+    ollamaUrl: settings.ollama_url || config.ollamaUrl,
+    ollamaModel: settings.ollama_model || config.ollamaModel
+  });
 
   await query(`INSERT INTO chat_messages (session_id, role, content) VALUES ($1, 'assistant', $2)`, [req.params.id, assistant]);
   await query(`UPDATE chat_sessions SET updated_at = NOW() WHERE id = $1`, [req.params.id]);

@@ -59,6 +59,13 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  useEffect(() => {
+    if (!token || !activeSessionId) return;
+    api<Message[]>(`/api/chat/sessions/${activeSessionId}/messages`, {}, token)
+      .then(setMessages)
+      .catch((err: Error) => setError(err.message));
+  }, [activeSessionId, token]);
+
   const submitAuth = async () => {
     setError("");
     try {

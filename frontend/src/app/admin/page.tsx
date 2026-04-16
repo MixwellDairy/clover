@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
@@ -10,13 +11,16 @@ type Setting = { key: string; value: string };
 type Analytics = { users: number; sessions: number; messages: number; memories: number };
 
 export default function AdminPage() {
-  const [token, setToken] = useState("");
+  const [token] = useState(() => (typeof window === "undefined" ? "" : window.localStorage.getItem("clover_token") || ""));
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [memories, setMemories] = useState<Memory[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [settings, setSettings] = useState<Setting[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [error, setError] = useState("");
+  const [settingKey, setSettingKey] = useState("groq_api_key");
+  const [settingValue, setSettingValue] = useState("");
+  const missingToken = !token;
 
   const load = async (authToken: string) => {
     const [u, m, c, s, a] = await Promise.all([
@@ -34,14 +38,12 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("clover_token") || "";
-    setToken(saved);
-    if (!saved) {
-      setError("Login first, then open /admin");
+    if (missingToken) {
       return;
     }
-    load(saved).catch((err: Error) => setError(err.message));
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load(token).catch((err: Error) => setError(err.message));
+  }, [missingToken, token]);
 
   const upsertSetting = async (key: string, value: string) => {
     await api("/api/admin/settings", { method: "PUT", body: JSON.stringify({ key, value }) }, token);
@@ -53,8 +55,8 @@ export default function AdminPage() {
       <section className="panel">
         <h1>Admin Dashboard</h1>
         <p>Manage users, conversations, memory and model settings.</p>
-        <a href="/">Back to chat</a>
-        {error && <p className="error">{error}</p>}
+        <Link href="/">Back to chat</Link>
+        {(missingToken || error) && <p className="error">{missingToken ? "Login first, then open /admin" : error}</p>}
       </section>
 
       {analytics && (
@@ -114,6 +116,11 @@ export default function AdminPage() {
           <button onClick={() => upsertSetting("ai_provider", "groq")}>Use Groq</button>
           <button onClick={() => upsertSetting("ai_provider", "ollama")}>Use Ollama</button>
           <button onClick={() => upsertSetting("ollama_url", "http://localhost:11434")}>Set Local Ollama URL</button>
+        </div>
+        <div className="setting-actions">
+          <input value={settingKey} onChange={(e) => setSettingKey(e.target.value)} placeholder="setting key" />
+          <input value={settingValue} onChange={(e) => setSettingValue(e.target.value)} placeholder="setting value" />
+          <button onClick={() => upsertSetting(settingKey, settingValue)}>Save setting</button>
         </div>
         <div className="table-grid">
           {settings.map((setting) => (
