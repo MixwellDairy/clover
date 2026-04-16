@@ -9,6 +9,15 @@ if [[ ! -f .env ]]; then
   echo "Created .env from .env.example"
 fi
 
-docker compose -f docker/docker-compose.yml up -d --build
+if docker compose version >/dev/null 2>&1; then
+  DOCKER_COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  DOCKER_COMPOSE=(docker-compose)
+else
+  echo "Error: Docker Compose is not available. Install Docker Compose v2 ('docker compose') or v1 ('docker-compose')." >&2
+  exit 1
+fi
+
+"${DOCKER_COMPOSE[@]}" -f docker/docker-compose.yml up -d --build
 
 echo "Clover installed. Frontend: http://localhost:3000 Backend: http://localhost:4000"
