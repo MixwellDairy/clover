@@ -21,6 +21,24 @@ cp .env.example .env
 ./scripts/install.sh
 ```
 
+## Easy Install / Update / Remove
+Use the provided helper scripts from the repository root:
+
+### Install
+```bash
+./scripts/install.sh
+```
+
+### Update
+```bash
+./scripts/update.sh
+```
+
+### Remove (including volumes/data)
+```bash
+./scripts/cleanup.sh
+```
+
 ## Local Development
 ### Backend
 ```bash
