@@ -14,6 +14,6 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && apk add --no-cache curl
 EXPOSE 4000
 CMD ["node", "dist/index.js"]
