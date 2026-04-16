@@ -6,6 +6,8 @@ import { api } from "@/lib/api";
 type Session = { id: string; title: string };
 type Message = { id: string; role: string; content: string; created_at: string };
 type User = { id: string; email: string; name: string; is_admin: boolean };
+const weatherIntentPattern =
+  /\b(weather|forecast|temperature|rain|snow|wind|humidity|storm|sunny|cloudy|hot|cold)\b/i;
 
 export default function Home() {
   const [token, setToken] = useState<string>("");
@@ -91,8 +93,7 @@ export default function Home() {
   const send = async () => {
     if (!activeSessionId || !draft.trim() || isSending) return;
     const content = draft.trim();
-    const weatherIntent =
-      /\b(weather|forecast|temperature|rain|snow|wind|humidity|storm|sunny|cloudy|hot|cold)\b/i.test(content);
+    const weatherIntent = weatherIntentPattern.test(content);
     setError("");
     setIsSending(true);
     setLoadingStatus(weatherIntent ? "Checking weather..." : "Clover is thinking...");
